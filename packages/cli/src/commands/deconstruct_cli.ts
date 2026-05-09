@@ -7,9 +7,10 @@ import {
 } from "@actalk/inkos-core";
 import type { DeconstructOptions, DeconstructSearchConfig } from "@actalk/inkos-core";
 import { defaultSearchConfig } from "@actalk/inkos-core";
-import { loadConfig, buildPipelineConfig, findProjectRoot, log, logError } from "../utils.js";
+import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { StateManager } from "@actalk/inkos-core";
 
 async function readTextFile(filePath: string): Promise<string> {
   const buffer = await readFile(filePath);
@@ -38,6 +39,7 @@ deconstructCommand
   .option("--name <name>", "Source name for the report")
   .option("--json", "Output JSON only")
   .option("--max-chapters <n>", "Max chapters to analyze", parseInt)
+  .option("--book <id>", "Book ID to associate calibration with")
   .action(async (file: string, opts) => {
     try {
       const depth = Math.min(7, Math.max(1, parseInt(opts.depth ?? "6", 10))) as DeconstructOptions["depth"];
@@ -69,7 +71,17 @@ deconstructCommand
         log: (msg) => { if (!opts.json) log(msg); },
       });
 
-      const deconstructDir = join(root, "story", "deconstruct");
+      // Determine output directory: book-scoped if --book is given, otherwise project-scoped
+      let deconstructDir: string;
+      if (opts.book) {
+        const bookId = await resolveBookId(opts.book, root);
+        const state = new StateManager(root);
+        const bookDir = state.bookDir(bookId);
+        deconstructDir = join(bookDir, "story", "deconstruct");
+        if (!opts.json) log(`  关联到书籍：${bookId}`);
+      } else {
+        deconstructDir = join(root, "story", "deconstruct");
+      }
       await mkdir(deconstructDir, { recursive: true });
 
       const calibration = generateCalibration(report);
@@ -174,6 +186,7 @@ deconstructCommand
   .option("--depth <n>", "Analysis depth for calibration", "6")
   .option("--language <lang>", "Text language")
   .option("--name <name>", "Source name")
+  .option("--book <id>", "Book ID to associate calibration with")
   .action(async (file: string, opts) => {
     try {
       const depth = Math.min(7, Math.max(1, parseInt(opts.depth ?? "6", 10))) as DeconstructOptions["depth"];
@@ -205,7 +218,13 @@ deconstructCommand
       });
 
       const calibration = generateCalibration(report);
-      const deconstructDir = join(root, "story", "deconstruct");
+      let deconstructDir: string;
+      if (opts.book) {
+        const state = new StateManager(root);
+        deconstructDir = join(state.bookDir(await resolveBookId(opts.book, root)), "story", "deconstruct");
+      } else {
+        deconstructDir = join(root, "story", "deconstruct");
+      }
       await mkdir(deconstructDir, { recursive: true });
       await writeFile(join(deconstructDir, "audit-calibration.json"), JSON.stringify(calibration, null, 2), "utf-8");
 
