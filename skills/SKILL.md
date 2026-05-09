@@ -23,7 +23,9 @@ Truth files are persisted as schema-validated JSON (`story/state/*.json`) with m
 - **Fan fiction**: Create fanfic from source material with 4 modes (canon, au, ooc, cp)
 - **Batch chapter generation**: Generate multiple chapters with consistent quality
 - **Import & continue**: Import existing chapters from a text file, reverse-engineer truth files, and continue writing
-- **Style imitation**: Analyze and adopt writing styles from reference texts
+- **Style imitation**: Analyze and adopt writing styles from reference texts — use `deconstruct` for full 7-layer analysis including audit calibration
+- **Style cloning with audit integration**: `deconstruct` generates per-style calibration so the audit system stops flagging intended stylistic choices (e.g., short paragraphs in Gu Long's style)
+- **Audience analysis**: Use `deconstruct audience` to analyze reader demographics, sweet spots, and deal-breakers for a genre
 - **Spinoff writing**: Write prequels/sequels/spinoffs while maintaining parent canon
 - **Quality auditing**: Detect AI-generated content and perform 33-dimension quality checks
 - **Genre exploration**: Explore trends and create custom genre rules
@@ -199,7 +201,49 @@ Use this when you have an existing novel (or partial novel) and want InkOS to pi
    - Generates a style guide from the existing text
    - New chapters maintain consistency with imported content
 
-### Workflow 4: Style Imitation
+### Workflow 4: Deconstruct Reference Text & Audit Calibration ⭐ RECOMMENDED
+
+When you have reference texts (e.g., Gu Long novels, existing works whose style you want to imitate), use the `deconstruct` command instead of the legacy `style import`. Deconstruct performs a 7-layer novel analysis and automatically calibrates the audit system to match the reference's stylistic norms — preventing false warnings like "paragraph too short" when the target style is inherently terse.
+
+1. **Full deconstruct (L1-L6)**:
+   ```bash
+   inkos deconstruct run reference.txt --book book-id --depth 6
+   ```
+   - L1 (code): Sentence/paragraph stats, dialogue density, punctuation fingerprint — milliseconds, no LLM cost
+   - L2-L6 (LLM): Chapter structure, emotional fluctuation, tone model, character engineering, reader effects
+   - Output: `story/deconstruct/audit-calibration.json`, per-layer JSON files, human-readable `report.md`
+
+2. **Quick calibration only** (L1 code + calibration file):
+   ```bash
+   inkos deconstruct calibrate reference.txt --book book-id
+   ```
+   - Fast path: runs L1 analysis and generates `audit-calibration.json`
+   - Audit system auto-loads this file — disables false warnings for the target style
+
+3. **Audience analysis (L7)**:
+   ```bash
+   inkos deconstruct audience --genre wuxia
+   inkos deconstruct audience --show-config
+   ```
+   - Synthesizes reader demographics, sweet spots, and deal-breakers via LLM
+   - Uses built-in search config (customizable with `--config`)
+
+**What calibration fixes (real example — Gu Long style):**
+- Before: Audit flagged "70 paragraphs shorter than 35 characters" as a warning every chapter
+- After: Calibration sets `shortParagraphWarning: false` — audit knows short paragraphs ARE the style
+
+**Integration with existing flow:**
+```
+deconstruct run ref.txt --book <id>  →  story/deconstruct/audit-calibration.json
+                                            ↓
+book create --brief ...              →  foundation generation
+                                            ↓
+write next <id>                       →  audit reads calibration, applies correct thresholds
+```
+
+### Workflow 5: Style Imitation (Legacy)
+
+The legacy `style import` command still works but provides only L1 statistical analysis. Prefer `deconstruct` for full-spectrum analysis and audit calibration.
 
 1. **Analyze reference text**:
    ```bash
@@ -214,7 +258,7 @@ Use this when you have an existing novel (or partial novel) and want InkOS to pi
    - All future chapters adopt this style profile
    - Style rules become part of the Reviser's audit criteria
 
-### Workflow 5: Spinoff/Prequel Writing
+### Workflow 6: Spinoff/Prequel Writing
 
 1. **Import parent canon**:
    ```bash
@@ -228,7 +272,7 @@ Use this when you have an existing novel (or partial novel) and want InkOS to pi
    inkos write next spinoff-book-id --count 3 --context "alternate timeline after Chapter 20"
    ```
 
-### Workflow 6: Fine-Grained Control (Draft → Audit → Revise)
+### Workflow 7: Fine-Grained Control (Draft → Audit → Revise)
 
 If you need separate control over each pipeline stage:
 
@@ -249,7 +293,7 @@ If you need separate control over each pipeline stage:
    ```
    - Modes: `polish` (minor), `spot-fix` (targeted), `rewrite` (major), `rework` (structure), `anti-detect` (reduce AI traces)
 
-### Workflow 7: Monitor Platform Trends
+### Workflow 8: Monitor Platform Trends
 
 ```bash
 inkos radar scan
@@ -257,7 +301,7 @@ inkos radar scan
 - Analyzes trending genres, tropes, and reader preferences
 - Informs Architect recommendations for new books
 
-### Workflow 8: Detect AI-Generated Content
+### Workflow 9: Detect AI-Generated Content
 
 ```bash
 # Detect AIGC in a specific chapter
@@ -269,7 +313,7 @@ inkos detect book-id --all
 - Uses 11 deterministic rules (zero LLM cost) + optional LLM validation
 - Returns detection confidence and problematic passages
 
-### Workflow 9: View Analytics
+### Workflow 10: View Analytics
 
 ```bash
 inkos analytics book-id --json
@@ -281,7 +325,7 @@ inkos stats book-id --json
 - Chapters with most issues, status distribution
 - **Token usage stats**: total prompt/completion tokens, avg tokens per chapter, recent trend
 
-### Workflow 10: Write an English Novel
+### Workflow 11: Write an English Novel
 
 ```bash
 # Create an English LitRPG novel (language auto-detected from genre)
@@ -297,7 +341,7 @@ inkos config set-global --lang en
 - Each genre has dedicated pacing rules, fatigue word lists (e.g., "delve", "tapestry", "testament"), and audit dimensions
 - Use `inkos genre list` to see all available genres
 
-### Workflow 11: Fan Fiction
+### Workflow 12: Fan Fiction
 
 ```bash
 # Create a fanfic from source material
@@ -310,7 +354,7 @@ inkos fanfic init --title "What If" --from source.txt --mode au --genre other
 - Fanfic-specific audit dimensions and information boundary controls
 - Ensures new content stays consistent with source canon (or deliberately diverges in au/ooc modes)
 
-### Workflow 12: Rename Characters or Entities Across Entire Book
+### Workflow 13: Rename Characters or Entities Across Entire Book
 
 ```bash
 # Via interact
@@ -324,7 +368,7 @@ inkos interact --json --message "/rename 林烬 => 张三"
 - Replaces every occurrence in one pass
 - Returns count of files touched
 
-### Workflow 13: Patch Specific Text in a Chapter
+### Workflow 14: Patch Specific Text in a Chapter
 
 ```bash
 inkos interact --json --message "/replace 5 旧文本 => 新文本"
@@ -332,7 +376,7 @@ inkos interact --json --message "/replace 5 旧文本 => 新文本"
 - Precisely replaces text in chapter 5 only
 - Marks chapter for review after patching
 
-### Workflow 14: Interactive TUI Dashboard
+### Workflow 15: Interactive TUI Dashboard
 
 ```bash
 inkos

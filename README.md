@@ -238,6 +238,34 @@ inkos export 吞天魔帝 --format epub  # 导出 EPUB（手机/Kindle 阅读）
 
 `inkos style analyze` 分析参考文本，提取统计指纹（句长分布、词频特征、节奏模式）和 LLM 风格指南。`inkos style import` 将指纹注入指定书籍，后续所有章节自动采用该风格，修订者也会用风格标准做审计。
 
+### 拆书分析 + 审计校准（推荐替代 style import）⭐
+
+当你有参考文本（如古龙小说）时，使用 `deconstruct` 命令做七层拆书分析。它不仅包含 style import 的全部能力，还会自动校准审计系统——避免审计用自己的通用规则误报目标风格的特征（如古龙短句被标记为"段落过碎"）。
+
+```bash
+# 七层拆书分析（L1 代码分析 + L2-L6 LLM 标注）
+inkos deconstruct run 多情剑客无情剑.txt --book 七支箭 --depth 6
+
+# 仅生成审计校准文件（快速，无需 LLM）
+inkos deconstruct calibrate 古龙小说.txt --book 七支箭
+
+# 读者画像分析（L7）
+inkos deconstruct audience --genre wuxia
+```
+
+**七层分析模型：**
+| 层 | 名称 | 分析内容 | 方式 |
+|----|------|----------|------|
+| L1 | 语言指纹 | 句长分布、段落分位数、对话密度、标点指纹、词汇 TTR | 纯代码 |
+| L2 | 章节结构 | 开场/收尾模式、场景切换方式、视角控制 | LLM 标注 |
+| L3 | 叙事波动 | 情绪曲线、反转频率、信息密度、悬念密度 | LLM 标注 |
+| L4 | 调性模型 | 叙事距离、哲学密度、幽默质感、暴力美学、孤独指数 | LLM 标注 |
+| L5 | 角色工程 | 出场工艺、角色区分度、关系弧线、角色功能 | LLM 标注 |
+| L6 | 读者效应 | 意外密度、情感击中、记忆锚点、翻页驱动力 | 合成 |
+| L7 | 读者期望 | 目标读者画像、甜点、毒点、爽点频率 | LLM + 搜索 |
+
+产物写入 `books/<id>/story/deconstruct/`，其中 `audit-calibration.json` 自动被审计系统加载。例如古龙书籍的校准会设置 `shortParagraphWarning: false`、`forbidInnerMonologue: true`——审计从此不再报短句和内心独白。
+
 ### 创作简报
 
 `inkos book create --brief my-ideas.md` 传入你的脑洞、世界观设定、人设文档。建筑师 agent 会基于简报生成故事设定（`story_bible.md`）和创作规则（`book_rules.md`），而非凭空创作；同时把简报落盘到 `story/author_intent.md`，让这本书的长期创作意图不会只在建书时生效一次。
