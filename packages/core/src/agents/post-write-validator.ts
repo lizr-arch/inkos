@@ -491,8 +491,9 @@ function appendParagraphShapeWarnings(
   violations: PostWriteViolation[],
   content: string,
   language: "zh" | "en",
+  calibration?: { readonly shortThreshold?: number; readonly maxConsecutiveShort?: number },
 ): void {
-  const shape = analyzeParagraphShape(content, language);
+  const shape = analyzeParagraphShape(content, language, calibration);
   if (shape.paragraphs.length < 4) return;
 
   if (shape.shortParagraphs.length >= 4 && shape.shortRatio >= 0.6) {
@@ -513,7 +514,8 @@ function appendParagraphShapeWarnings(
     );
   }
 
-  if (shape.maxConsecutiveShort >= 3) {
+  const maxConsec = calibration?.maxConsecutiveShort ?? 3;
+  if (shape.maxConsecutiveShort >= maxConsec) {
     violations.push(
       language === "en"
         ? {
@@ -535,9 +537,10 @@ function appendParagraphShapeWarnings(
 export function detectParagraphShapeWarnings(
   content: string,
   language: "zh" | "en" = "zh",
+  calibration?: { readonly shortThreshold?: number; readonly maxConsecutiveShort?: number },
 ): ReadonlyArray<PostWriteViolation> {
   const violations: PostWriteViolation[] = [];
-  appendParagraphShapeWarnings(violations, content, language);
+  appendParagraphShapeWarnings(violations, content, language, calibration);
   return violations;
 }
 
@@ -546,11 +549,11 @@ function isDialogueParagraph(paragraph: string): boolean {
   return /^[""「『'《]/.test(trimmed) || /^[""]/.test(trimmed) || /^——/.test(trimmed);
 }
 
-function analyzeParagraphShape(content: string, language: "zh" | "en"): ParagraphShape {
+function analyzeParagraphShape(content: string, language: "zh" | "en", calibration?: { readonly shortThreshold?: number; readonly maxConsecutiveShort?: number }): ParagraphShape {
   const paragraphs = extractParagraphs(content);
   // Exclude dialogue lines from short paragraph counting — dialogue is naturally short
   const narrativeParagraphs = paragraphs.filter((p) => !isDialogueParagraph(p));
-  const shortThreshold = language === "en" ? 120 : 35;
+  const shortThreshold = calibration?.shortThreshold ?? (language === "en" ? 120 : 35);
   const shortParagraphs = narrativeParagraphs.filter((paragraph) => paragraph.length < shortThreshold);
   const averageLength = paragraphs.length > 0
     ? paragraphs.reduce((sum, paragraph) => sum + paragraph.length, 0) / paragraphs.length

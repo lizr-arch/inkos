@@ -28,6 +28,7 @@ import { createStudioCommand, launchStudioEntry } from "./commands/studio.js";
 import { consolidateCommand } from "./commands/consolidate.js";
 import { createInteractCommand, type InteractCommandHooks } from "./commands/interact.js";
 import { createTuiCommand } from "./commands/tui.js";
+import { deconstructCommand } from "./commands/deconstruct_cli.js";
 import { launchTui } from "./tui/app.js";
 
 const require = createRequire(import.meta.url);
@@ -86,6 +87,7 @@ export function createProgram(hooks: ProgramHooks = {}): Command {
   program.addCommand(fanficCommand);
   program.addCommand(createStudioCommand({ launchStudio: hooks.launchStudio }));
   program.addCommand(consolidateCommand);
+  program.addCommand(deconstructCommand);
   program.addCommand(createInteractCommand({
     runInteraction: hooks.runInteraction,
     readInput: hooks.readInteractionInput,

@@ -9,11 +9,12 @@ import { parseSettlerDeltaOutput } from "./settler-delta-parser.js";
 import { parseSettlementOutput } from "./settler-parser.js";
 import { readGenreProfile, readBookRules } from "./rules-reader.js";
 import {
-  detectCrossChapterRepetition,
-  detectParagraphLengthDrift,
-  normalizePostWriteSurface,
   validatePostWrite,
+  detectParagraphLengthDrift,
+  detectCrossChapterRepetition,
+  detectParagraphShapeWarnings,
   type PostWriteViolation,
+  normalizePostWriteSurface,
 } from "./post-write-validator.js";
 import { analyzeAITells } from "./ai-tells.js";
 import type { ChapterIntent, ChapterMemo, ContextPackage, RuleStack } from "../models/input-governance.js";
@@ -362,10 +363,28 @@ export class WriterAgent extends BaseAgent {
     // ── Post-write validation (regex + rule-based, zero LLM cost) ──
     const surfaceNormalizedContent = normalizePostWriteSurface(creative.content, resolvedLanguage);
     const surfaceNormalizedWordCount = countChapterLength(surfaceNormalizedContent, resolvedLengthSpec.countingMode);
+
+    // Load audit calibration if present (from deconstruct)
+    let paragraphCalibration: { shortThreshold?: number; maxConsecutiveShort?: number } | undefined;
+    try {
+      const calibRaw = await this.readFileOrDefault(join(input.bookDir, "story", "deconstruct", "audit-calibration.json"));
+      if (calibRaw && calibRaw !== "(文件尚未创建)") {
+        const calib = JSON.parse(calibRaw) as { paragraph?: { shortParagraphMinLength?: number | null; maxConsecutiveShort?: number | null; shortParagraphWarning?: boolean } };
+        if (calib.paragraph?.shortParagraphWarning === false) {
+          paragraphCalibration = { shortThreshold: 1, maxConsecutiveShort: 999 };
+        } else if (calib.paragraph) {
+          paragraphCalibration = {};
+          if (calib.paragraph.shortParagraphMinLength != null) paragraphCalibration.shortThreshold = calib.paragraph.shortParagraphMinLength;
+          if (calib.paragraph.maxConsecutiveShort != null) paragraphCalibration.maxConsecutiveShort = calib.paragraph.maxConsecutiveShort;
+        }
+      }
+    } catch { /* no calibration */ }
+
     const ruleViolations = [
       ...validatePostWrite(surfaceNormalizedContent, genreProfile, bookRules, resolvedLanguage),
       ...detectCrossChapterRepetition(surfaceNormalizedContent, fingerprintChapters, resolvedLanguage),
       ...detectParagraphLengthDrift(surfaceNormalizedContent, fingerprintChapters, resolvedLanguage),
+      ...detectParagraphShapeWarnings(surfaceNormalizedContent, resolvedLanguage, paragraphCalibration),
     ];
     const aiTellIssues = analyzeAITells(surfaceNormalizedContent, resolvedLanguage).issues;
 
