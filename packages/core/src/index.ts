@@ -258,7 +258,7 @@ export { analyzeSensitiveWords, type SensitiveWordResult, type SensitiveWordMatc
 export { detectAIContent, type DetectionResult } from "./agents/detector.js";
 export { analyzeStyle } from "./agents/style-analyzer.js";
 export { deconstruct, type DeconstructContext } from "./agents/deconstructor.js";
-export { generateCalibration, loadCalibration, analyzeAudience, formatReport, type AudienceAnalysisContext } from "./agents/audit-calibrator.js";
+export { generateCalibration, loadCalibration, analyzeAudience, formatReport, mergeCalibrations, type AudienceAnalysisContext } from "./agents/audit-calibrator.js";
 export { type DeconstructReport, type DeconstructOptions, type DeconstructDepth, type DeconstructSearchConfig, type Layer1Lexicon, type Layer2Structure, type Layer3Fluctuation, type Layer4Tone, type Layer5Characters, type Layer6ReaderEffects, type Layer7Audience, type ChapterAnnotation, type SearchSource, defaultSearchConfig } from "./models/deconstruct.js";
 export { type AuditCalibration, DEFAULT_CALIBRATION } from "./models/audit-calibration.js";
 export { analyzeDetectionInsights } from "./agents/detection-insights.js";

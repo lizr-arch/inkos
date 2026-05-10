@@ -336,3 +336,105 @@ export function formatReport(report: DeconstructReport, language: "zh" | "en"): 
 
   return lines.join("\n");
 }
+
+// ────────────────────────────────────────────────
+// Multi-source calibration merge
+// ────────────────────────────────────────────────
+
+export function mergeCalibrations(calibrations: ReadonlyArray<AuditCalibration>): AuditCalibration {
+  if (calibrations.length === 0) return { ...DEFAULT_CALIBRATION, enabled: true };
+  if (calibrations.length === 1) return calibrations[0]!;
+
+  const sourceNames = calibrations.map(c => c.sourceName).filter(Boolean);
+
+  // Sentence length: take widest range across all sources
+  const p05 = Math.min(...calibrations.map(c => c.sentenceLength.p05));
+  const p95 = Math.max(...calibrations.map(c => c.sentenceLength.p95));
+
+  // Paragraph: use most permissive settings (if any source says don't warn, don't warn)
+  const shortParagraphWarning = calibrations.some(c => c.paragraph.shortParagraphWarning);
+  const shortMin = Math.min(
+    ...calibrations.map(c => c.paragraph.shortParagraphMinLength ?? 999).filter(n => n !== null),
+  );
+  const consecutiveShortWarning = calibrations.some(c => c.paragraph.consecutiveShortWarning);
+  const maxConsecutiveShort = Math.max(
+    ...calibrations.map(c => c.paragraph.maxConsecutiveShort ?? 0).filter(n => n !== null),
+    0,
+  );
+
+  // Opening: union of expected types, intersection of forbidden
+  const expectedTypes = [...new Set(calibrations.flatMap(c => c.opening.expectedTypes))];
+  const forbiddenTypes = [...new Set(calibrations.flatMap(c => c.opening.forbiddenTypes))];
+
+  // Closing: take the pattern from the source with most chapters
+  const closing = calibrations[0]!.closing;
+
+  // Dialogue: widest range, max turns
+  const dMin = Math.min(...calibrations.map(c => c.dialogue.densityRange[0]));
+  const dMax = Math.max(...calibrations.map(c => c.dialogue.densityRange[1]));
+  const maxTurns = Math.max(...calibrations.map(c => c.dialogue.maxConsecutiveTurns));
+
+  // Combat: use most restrictive (if any source forbids techniques, forbid)
+  const forbidTechniques = calibrations.some(c => c.combat.forbidTechniqueNames);
+  const maxCombatDesc = Math.min(...calibrations.map(c => c.combat.maxDescriptionLength));
+  const requireEnvMetaphors = calibrations.some(c => c.combat.requireEnvironmentalMetaphors);
+
+  // POV: if any source forbids inner monologue, forbid
+  const forbidInner = calibrations.some(c => c.pov.forbidInnerMonologue);
+  const povModes = [...new Set(calibrations.map(c => c.pov.expectedMode))];
+
+  // Character entrance: widest range
+  const entranceMin = Math.min(...calibrations.map(c => c.characterEntrance.minLeadLength));
+  const entranceMax = Math.max(...calibrations.map(c => c.characterEntrance.maxLeadLength));
+
+  // Tone: union of all ranges
+  const toneDistMin = Math.min(...calibrations.map(c => c.tone.narrativeDistanceRange[0]));
+  const toneDistMax = Math.max(...calibrations.map(c => c.tone.narrativeDistanceRange[1]));
+  const toneLonelyMin = Math.min(...calibrations.map(c => c.tone.lonelinessIndexRange[0]));
+  const toneLonelyMax = Math.max(...calibrations.map(c => c.tone.lonelinessIndexRange[1]));
+  const toneWarmthMin = Math.min(...calibrations.map(c => c.tone.warmthLevelRange[0]));
+  const toneWarmthMax = Math.max(...calibrations.map(c => c.tone.warmthLevelRange[1]));
+
+  // Emotion: widest range
+  const volMin = Math.min(...calibrations.map(c => c.emotion.volatilityRange[0]));
+  const volMax = Math.max(...calibrations.map(c => c.emotion.volatilityRange[1]));
+  const revMin = Math.min(...calibrations.map(c => c.emotion.reversalFrequencyRange[0]));
+  const revMax = Math.max(...calibrations.map(c => c.emotion.reversalFrequencyRange[1]));
+
+  // Page-turner: lowest threshold
+  const minStrength = Math.min(...calibrations.map(c => c.pageTurner.minStrength));
+
+  // Reader: union of sweet spots and deal-breakers
+  const sweetSpots = [...new Set(calibrations.flatMap(c => c.reader.sweetSpots))];
+  const dealBreakers = [...new Set(calibrations.flatMap(c => c.reader.dealBreakers))];
+
+  return {
+    sourceName: `merged: ${sourceNames.join(", ")}`,
+    generatedAt: new Date().toISOString(),
+    enabled: true,
+    sentenceLength: { p05, p95 },
+    paragraph: {
+      shortParagraphWarning,
+      shortParagraphMinLength: shortMin === 999 ? null : shortMin,
+      consecutiveShortWarning,
+      maxConsecutiveShort: maxConsecutiveShort === 0 ? null : maxConsecutiveShort,
+    },
+    opening: { expectedTypes, forbiddenTypes },
+    closing,
+    dialogue: { densityRange: [dMin, dMax] as const, maxConsecutiveTurns: maxTurns },
+    combat: { forbidTechniqueNames: forbidTechniques, maxDescriptionLength: maxCombatDesc, requireEnvironmentalMetaphors: requireEnvMetaphors },
+    pov: { forbidInnerMonologue: forbidInner, expectedMode: povModes.join(", ") },
+    characterEntrance: { minLeadLength: entranceMin, maxLeadLength: entranceMax },
+    tone: {
+      narrativeDistanceRange: [toneDistMin, toneDistMax] as const,
+      lonelinessIndexRange: [toneLonelyMin, toneLonelyMax] as const,
+      warmthLevelRange: [toneWarmthMin, toneWarmthMax] as const,
+    },
+    emotion: {
+      volatilityRange: [volMin, volMax] as const,
+      reversalFrequencyRange: [revMin, revMax] as const,
+    },
+    pageTurner: { minStrength },
+    reader: { sweetSpots, dealBreakers },
+  };
+}

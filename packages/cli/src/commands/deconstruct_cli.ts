@@ -5,7 +5,7 @@ import {
   analyzeAudience,
   formatReport,
 } from "@actalk/inkos-core";
-import type { DeconstructOptions, DeconstructSearchConfig } from "@actalk/inkos-core";
+import type { DeconstructOptions, DeconstructSearchConfig, AuditCalibration } from "@actalk/inkos-core";
 import { defaultSearchConfig } from "@actalk/inkos-core";
 import { loadConfig, buildPipelineConfig, findProjectRoot, resolveBookId, log, logError } from "../utils.js";
 import { readFile, writeFile, mkdir } from "node:fs/promises";
@@ -71,17 +71,20 @@ deconstructCommand
         log: (msg) => { if (!opts.json) log(msg); },
       });
 
-      // Determine output directory: book-scoped if --book is given, otherwise project-scoped
-      let deconstructDir: string;
+      // Determine base deconstruct directory: book-scoped or project-scoped
+      let baseDeconstructDir: string;
       if (opts.book) {
         const bookId = await resolveBookId(opts.book, root);
         const state = new StateManager(root);
         const bookDir = state.bookDir(bookId);
-        deconstructDir = join(bookDir, "story", "deconstruct");
+        baseDeconstructDir = join(bookDir, "story", "deconstruct");
         if (!opts.json) log(`  关联到书籍：${bookId}`);
       } else {
-        deconstructDir = join(root, "story", "deconstruct");
+        baseDeconstructDir = join(root, "story", "deconstruct");
       }
+      // Each source gets its own subdirectory, so multiple books don't overwrite
+      const sourceName = (opts.name ?? file).replace(/[\/\\:*?"<>|]/g, "_");
+      const deconstructDir = join(baseDeconstructDir, "sources", sourceName);
       await mkdir(deconstructDir, { recursive: true });
 
       const calibration = generateCalibration(report);
@@ -218,13 +221,15 @@ deconstructCommand
       });
 
       const calibration = generateCalibration(report);
-      let deconstructDir: string;
+      let baseDeconstructDir: string;
       if (opts.book) {
         const state = new StateManager(root);
-        deconstructDir = join(state.bookDir(await resolveBookId(opts.book, root)), "story", "deconstruct");
+        baseDeconstructDir = join(state.bookDir(await resolveBookId(opts.book, root)), "story", "deconstruct");
       } else {
-        deconstructDir = join(root, "story", "deconstruct");
+        baseDeconstructDir = join(root, "story", "deconstruct");
       }
+      const sourceName = (opts.name ?? file).replace(/[\/\\:*?"<>|]/g, "_");
+      const deconstructDir = join(baseDeconstructDir, "sources", sourceName);
       await mkdir(deconstructDir, { recursive: true });
       await writeFile(join(deconstructDir, "audit-calibration.json"), JSON.stringify(calibration, null, 2), "utf-8");
 
@@ -238,6 +243,86 @@ deconstructCommand
       log(`  翻页强度：≥${calibration.pageTurner.minStrength}`);
     } catch (e) {
       logError(`校准生成失败: ${e}`);
+      process.exit(1);
+    }
+  });
+
+// ── deconstruct merge ──
+deconstructCommand
+  .command("merge")
+  .description("Merge multiple source calibrations into one. Reads all sources/ subdirectories.")
+  .option("--book <id>", "Book ID to merge and save calibration for")
+  .option("--json", "Output JSON only")
+  .action(async (opts) => {
+    try {
+      const root = findProjectRoot();
+      let deconstructDir: string;
+      if (opts.book) {
+        const bookId = await resolveBookId(opts.book, root);
+        const state = new StateManager(root);
+        deconstructDir = join(state.bookDir(bookId), "story", "deconstruct");
+      } else {
+        deconstructDir = join(root, "story", "deconstruct");
+      }
+
+      const sourcesDir = join(deconstructDir, "sources");
+      const { readdir } = await import("node:fs/promises");
+      let entries: string[];
+      try {
+        entries = await readdir(sourcesDir);
+      } catch {
+        log("没有找到 sources/ 子目录。请先运行 deconstruct run 导入参考文本。");
+        process.exit(0);
+      }
+
+      // Filter to directories only
+      const dirNames: string[] = [];
+      for (const e of entries) {
+        try {
+          const s = await import("node:fs/promises").then(m => m.stat(join(sourcesDir, e)));
+          if (s.isDirectory()) dirNames.push(e);
+        } catch { /* skip */ }
+      }
+      if (dirNames.length === 0) {
+        log("sources/ 下没有子目录。请先运行 deconstruct run 导入参考文本。");
+        process.exit(0);
+      }
+
+      const { mergeCalibrations } = await import("@actalk/inkos-core");
+
+      const cals: AuditCalibration[] = [];
+      for (const name of dirNames) {
+        try {
+          const raw = await readTextFile(join(sourcesDir, name, "audit-calibration.json"));
+          cals.push(JSON.parse(raw) as AuditCalibration);
+        } catch {
+          if (!opts.json) log(`  跳过 ${name}（无校准文件）`);
+        }
+      }
+
+      if (cals.length === 0) {
+        log("没有找到有效的校准文件。");
+        process.exit(0);
+      }
+
+      const merged = mergeCalibrations(cals);
+      await writeFile(join(deconstructDir, "audit-calibration.json"), JSON.stringify(merged, null, 2), "utf-8");
+      await mkdir(deconstructDir, { recursive: true });
+
+      if (opts.json) {
+        log(JSON.stringify(merged));
+      } else {
+        log(`合并完成：${dirNames.length} 个来源 → audit-calibration.json`);
+        log(`  来源：${merged.sourceName}`);
+        log(`  句长范围：P05=${merged.sentenceLength.p05} P95=${merged.sentenceLength.p95}`);
+        log(`  短段警告：${merged.paragraph.shortParagraphWarning ? "启用" : "禁用"}`);
+        log(`  开场模式：${merged.opening.expectedTypes.join(", ") || "不限"}`);
+        log(`  收尾模式：${merged.closing.expectedPattern}`);
+        log(`  调性范围：叙事距离 ${merged.tone.narrativeDistanceRange[0]}-${merged.tone.narrativeDistanceRange[1]}，孤独 ${merged.tone.lonelinessIndexRange[0]}-${merged.tone.lonelinessIndexRange[1]}`);
+        log(`  翻页强度：≥${merged.pageTurner.minStrength}`);
+      }
+    } catch (e) {
+      logError(`合并失败: ${e}`);
       process.exit(1);
     }
   });
