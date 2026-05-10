@@ -237,6 +237,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     getAllEndpoints: getAllEndpointsMock,
     probeModelsFromUpstream: probeModelsFromUpstreamMock,
     fetchWithProxy: vi.fn((input: Parameters<typeof fetch>[0], init?: RequestInit) => fetch(input, init)),
+    executeEditTransaction: actual.executeEditTransaction,
     GLOBAL_ENV_PATH: join(tmpdir(), "inkos-global.env"),
   };
 });
@@ -527,6 +528,114 @@ describe("createStudioServer daemon lifecycle", () => {
     await expect(readFile(join(storyDir, "current_focus.md"), "utf-8")).resolves.toBe(
       "# Current Focus\n\nPull focus back to the harbor trail.\n",
     );
+  });
+
+  it("marks a chapter as audit-failed when updating via PUT /api/v1/books/:id/chapters/:num", async () => {
+    loadChapterIndexMock.mockResolvedValueOnce([{
+      number: 3,
+      title: "Demo",
+      status: "approved",
+      wordCount: 100,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    }]);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/chapters/3", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content: "# Demo\n\nBody (edited)\n" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      chapterNumber: 3,
+      reviewRequired: true,
+    });
+
+    await expect(readFile(join(root, "books", "demo-book", "chapters", "0003_Demo.md"), "utf-8")).resolves.toBe(
+      "# Demo\n\nBody (edited)\n",
+    );
+
+    expect(saveChapterIndexMock).toHaveBeenCalledTimes(1);
+    const saved = saveChapterIndexMock.mock.calls[0]?.[1] as Array<any>;
+    expect(saved[0]).toMatchObject({
+      number: 3,
+      status: "audit-failed",
+    });
+    expect(saved[0].auditIssues).toEqual(expect.arrayContaining([
+      "[warning] Manual text edit requires review before continuation.",
+    ]));
+  }, 15_000);
+
+  it("supports patching a chapter via POST /api/v1/books/:id/chapters/:num/local-edit", async () => {
+    loadChapterIndexMock.mockResolvedValueOnce([{
+      number: 3,
+      title: "Demo",
+      status: "ready-for-review",
+      wordCount: 100,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      auditIssues: [],
+      lengthWarnings: [],
+    }]);
+
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/chapters/3/local-edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetText: "Body", replacementText: "Body (patched)" }),
+    });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      ok: true,
+      chapterNumber: 3,
+      reviewRequired: true,
+    });
+
+    await expect(readFile(join(root, "books", "demo-book", "chapters", "0003_Demo.md"), "utf-8")).resolves.toBe(
+      "# Demo\n\nBody (patched)",
+    );
+  }, 15_000);
+
+  it("applies inline marks through spot-fix revise via POST /api/v1/books/:id/chapters/:num/inline-marks", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/chapters/3/inline-marks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markedContent: "# Demo\n\nBody【把节奏更紧一些】\n" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(reviseDraftMock).toHaveBeenCalledWith("demo-book", 3, "spot-fix");
+    expect(pipelineConfigs.at(-1)).toMatchObject({
+      externalContext: expect.stringContaining("把节奏更紧一些"),
+    });
+  }, 15_000);
+
+  it("rejects inline marks when the marked content differs from the current chapter", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/books/demo-book/chapters/3/inline-marks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ markedContent: "# Demo\n\nBody changed【把节奏更紧一些】\n" }),
+    });
+
+    expect(response.status).toBe(409);
+    const json = await response.json() as any;
+    expect(json.error.code).toBe("INLINE_MARKS_MISMATCH");
   });
 
   it("reflects project edits immediately without restarting the studio server", async () => {

@@ -37,6 +37,7 @@ import {
   chatCompletion,
   buildExportArtifact,
   GLOBAL_ENV_PATH,
+  executeEditTransaction,
   type ResolvedModel,
   type PipelineConfig,
   type ProjectConfig,
@@ -166,6 +167,119 @@ function isWriteNextInstruction(instruction: string): boolean {
   const trimmed = instruction.trim();
   return /^(continue|继续|继续写|写下一章|write next|下一章|再来一章)$/i.test(trimmed)
     || /(继续写|写下一章|下一章|再来一章|write\s+next)/i.test(trimmed);
+}
+
+type InlineMark = {
+  readonly raw: string;
+  readonly instruction: string;
+  readonly offset: number;
+};
+
+function normalizeTextForCompare(text: string): string {
+  return text.replace(/\r\n/g, "\n").replace(/[ \t]+\n/g, "\n").trimEnd();
+}
+
+function extractInlineMarks(markedContent: string): { stripped: string; marks: InlineMark[] } {
+  const text = markedContent.replace(/\r\n/g, "\n");
+  const marks: InlineMark[] = [];
+  let out = "";
+  let i = 0;
+
+  while (i < text.length) {
+    if (text[i] === "【") {
+      const end = text.indexOf("】", i + 1);
+      if (end !== -1) {
+        const raw = text.slice(i, end + 1);
+        const instruction = raw.slice(1, -1).trim();
+        marks.push({ raw, instruction, offset: out.length });
+        i = end + 1;
+        continue;
+      }
+    }
+    if (text[i] === "[" && text[i + 1] === "[") {
+      const end = text.indexOf("]]", i + 2);
+      if (end !== -1) {
+        const raw = text.slice(i, end + 2);
+        const instruction = raw.slice(2, -2).trim();
+        marks.push({ raw, instruction, offset: out.length });
+        i = end + 2;
+        continue;
+      }
+    }
+    out += text[i];
+    i += 1;
+  }
+
+  return { stripped: out, marks };
+}
+
+function countOccurrences(haystack: string, needle: string): number {
+  if (!needle) return 0;
+  let count = 0;
+  let idx = 0;
+  while (true) {
+    const next = haystack.indexOf(needle, idx);
+    if (next === -1) return count;
+    count += 1;
+    idx = next + needle.length;
+  }
+}
+
+function extractBestTargetWindow(args: {
+  readonly original: string;
+  readonly offset: number;
+}): string | null {
+  const original = args.original;
+  const offset = Math.max(0, Math.min(args.offset, original.length));
+
+  const paraStart = Math.max(0, original.lastIndexOf("\n\n", offset - 1) + 2);
+  const paraEndCandidate = original.indexOf("\n\n", offset);
+  const paraEnd = paraEndCandidate === -1 ? original.length : paraEndCandidate;
+  const paragraphRaw = original.slice(paraStart, paraEnd);
+  if (!paragraphRaw.trim()) return null;
+
+  const tighten = (text: string): string => text.replace(/^\s+|\s+$/g, "");
+
+  const sentenceMatches = [...paragraphRaw.matchAll(/[^。！？!?]+[。！？!?]?/g)];
+  const sentences = sentenceMatches
+    .map((m) => ({ start: m.index ?? 0, end: (m.index ?? 0) + m[0].length, text: m[0] }))
+    .filter((s) => s.text.trim().length > 0);
+
+  const local = Math.max(0, Math.min(offset - paraStart, paragraphRaw.length));
+  let sentenceIndex = sentences.length > 0
+    ? sentences.findIndex((s) => local >= s.start && local <= s.end)
+    : -1;
+  if (sentenceIndex < 0) {
+    sentenceIndex = Math.min(Math.max(0, sentences.length - 1), Math.max(0, Math.floor(sentences.length / 2)));
+  }
+
+  if (sentences.length > 0) {
+    for (let radius = 0; radius <= 3; radius += 1) {
+      const start = sentences[Math.max(0, sentenceIndex - radius)]?.start ?? 0;
+      const end = sentences[Math.min(sentences.length - 1, sentenceIndex + radius)]?.end ?? paragraphRaw.length;
+      const candidate = tighten(paragraphRaw.slice(start, end));
+      if (!candidate) continue;
+      if (candidate.length > 1600) continue;
+      if (countOccurrences(original, candidate) === 1) return candidate;
+    }
+  }
+
+  const paragraphCandidate = tighten(paragraphRaw);
+  if (paragraphCandidate.length <= 2200 && countOccurrences(original, paragraphCandidate) === 1) {
+    return paragraphCandidate;
+  }
+
+  const maxRadius = Math.min(2400, paragraphRaw.length);
+  for (let radius = 80; radius <= maxRadius; radius += 80) {
+    const start = Math.max(0, local - radius);
+    const end = Math.min(paragraphRaw.length, local + radius);
+    const candidate = tighten(paragraphRaw.slice(start, end));
+    if (candidate.length < 40) continue;
+    if (candidate.length > 2200) continue;
+    if (countOccurrences(original, candidate) === 1) return candidate;
+  }
+
+  return null;
 }
 
 function looksLikeBookCreatedClaim(responseText: string): boolean {
@@ -1016,10 +1130,155 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
       if (!match) return c.json({ error: "Chapter not found" }, 404);
 
-      const { writeFile: writeFileFs } = await import("node:fs/promises");
-      await writeFileFs(join(chaptersDir, match), content, "utf-8");
-      return c.json({ ok: true, chapterNumber: num });
+      const chapterPath = join(chaptersDir, match);
+      const existing = await readFile(chapterPath, "utf-8");
+      if (existing === content) {
+        return c.json({ ok: true, chapterNumber: num, unchanged: true });
+      }
+
+      const result = await executeEditTransaction(
+        {
+          bookDir: (bookId) => state.bookDir(bookId),
+          loadChapterIndex: (bookId) => state.loadChapterIndex(bookId),
+          saveChapterIndex: (bookId, index) => state.saveChapterIndex(bookId, index),
+        },
+        {
+          kind: "chapter-local-edit",
+          bookId: id,
+          chapterNumber: num,
+          instruction: "Manual chapter overwrite via Studio",
+          targetText: existing,
+          replacementText: content,
+        },
+      );
+
+      return c.json({
+        ok: true,
+        chapterNumber: num,
+        reviewRequired: result.reviewRequired,
+        summary: result.summary,
+      });
     } catch (e) {
+      return c.json({ error: String(e) }, 500);
+    }
+  });
+
+  app.post("/api/v1/books/:id/chapters/:num/local-edit", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    const body = await c.req.json<{
+      targetText?: unknown;
+      replacementText?: unknown;
+      instruction?: unknown;
+    }>().catch((): { targetText?: unknown; replacementText?: unknown; instruction?: unknown } => ({}));
+
+    const targetText = typeof body.targetText === "string" ? body.targetText : "";
+    const replacementText = typeof body.replacementText === "string" ? body.replacementText : undefined;
+    const instruction = typeof body.instruction === "string" && body.instruction.trim()
+      ? body.instruction.trim()
+      : "Manual chapter patch via Studio";
+
+    if (!targetText.trim() || replacementText === undefined) {
+      throw new ApiError(400, "INVALID_PATCH", "targetText and replacementText are required");
+    }
+
+    try {
+      const result = await executeEditTransaction(
+        {
+          bookDir: (bookId) => state.bookDir(bookId),
+          loadChapterIndex: (bookId) => state.loadChapterIndex(bookId),
+          saveChapterIndex: (bookId, index) => state.saveChapterIndex(bookId, index),
+        },
+        {
+          kind: "chapter-local-edit",
+          bookId: id,
+          chapterNumber: num,
+          instruction,
+          targetText,
+          replacementText,
+        },
+      );
+
+      return c.json({
+        ok: true,
+        chapterNumber: num,
+        reviewRequired: result.reviewRequired,
+        summary: result.summary,
+      });
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 400);
+    }
+  });
+
+  app.post("/api/v1/books/:id/chapters/:num/inline-marks", async (c) => {
+    const id = c.req.param("id");
+    const num = parseInt(c.req.param("num"), 10);
+    const body = await c.req.json<{ markedContent: string }>();
+    const bookDir = state.bookDir(id);
+    const chaptersDir = join(bookDir, "chapters");
+
+    const files = await readdir(chaptersDir);
+    const paddedNum = String(num).padStart(4, "0");
+    const match = files.find((f) => f.startsWith(paddedNum) && f.endsWith(".md"));
+    if (!match) return c.json({ error: "Chapter not found" }, 404);
+
+    const chapterPath = join(chaptersDir, match);
+    const original = await readFile(chapterPath, "utf-8");
+    const extracted = extractInlineMarks(body.markedContent ?? "");
+    const normalizedOriginal = normalizeTextForCompare(original);
+    const normalizedStripped = normalizeTextForCompare(extracted.stripped);
+
+    if (!normalizedStripped || normalizedOriginal !== normalizedStripped) {
+      return c.json({
+        error: {
+          code: "INLINE_MARKS_MISMATCH",
+          message: "带标记文本与当前章节不一致。请从当前章节正文复制一份，再只插入【...】或[[...]]标记，不要改动其他文字。",
+        },
+      }, 409);
+    }
+
+    const marks = extracted.marks.filter((m) => m.instruction.trim().length > 0);
+    if (marks.length === 0) {
+      return c.json({
+        error: { code: "INLINE_MARKS_EMPTY", message: "未检测到可用标记（【…】或[[…]]）。" },
+      }, 400);
+    }
+
+    const targets: Array<{ instruction: string; targetText: string }> = [];
+    for (const mark of marks) {
+      const targetText = extractBestTargetWindow({ original: normalizedOriginal, offset: mark.offset });
+      if (!targetText) {
+        return c.json({
+          error: {
+            code: "INLINE_MARKS_TARGET_NOT_UNIQUE",
+            message: `无法为标记「${mark.raw}」定位唯一可替换的目标文本。建议把标记放在更明确的句子附近，或改用“局部替换（补丁）”。`,
+          },
+        }, 409);
+      }
+      targets.push({ instruction: mark.instruction, targetText });
+    }
+
+    const brief = [
+      "你将收到作者在章节正文中插入的内联标记修改要求。请按 spot-fix 模式输出 PATCHES。",
+      "要求：只修改 TARGET_TEXT 对应的局部文本以满足 INSTRUCTION；不得改动其他内容；保持原文风格与剧情一致。",
+      "标记列表：",
+      ...targets.map((t, idx) => [
+        `${idx + 1}) INSTRUCTION: ${t.instruction}`,
+        "TARGET_TEXT:",
+        "<<<",
+        t.targetText,
+        ">>>",
+      ].join("\n")),
+    ].join("\n\n");
+
+    broadcast("revise:start", { bookId: id, chapter: num });
+    try {
+      const pipeline = new PipelineRunner(await buildPipelineConfig({ externalContext: brief }));
+      const result = await pipeline.reviseDraft(id, num, "spot-fix");
+      broadcast("revise:complete", { bookId: id, chapter: num });
+      return c.json(result);
+    } catch (e) {
+      broadcast("revise:error", { bookId: id, error: String(e) });
       return c.json({ error: String(e) }, 500);
     }
   });

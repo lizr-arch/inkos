@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fetchJson, useApi, postApi } from "../hooks/use-api";
+import { useApi, postApi, putApi } from "../hooks/use-api";
 import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import { useColors } from "../hooks/use-colors";
@@ -45,6 +45,11 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
   const [saving, setSaving] = useState(false);
+  const [targetText, setTargetText] = useState("");
+  const [replacementText, setReplacementText] = useState("");
+  const [patching, setPatching] = useState(false);
+  const [markedContent, setMarkedContent] = useState("");
+  const [inlineApplying, setInlineApplying] = useState(false);
 
   const handleStartEdit = () => {
     if (!data) return;
@@ -60,11 +65,7 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await fetchJson(`/books/${bookId}/chapters/${chapterNumber}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: editContent }),
-      });
+      await putApi(`/books/${bookId}/chapters/${chapterNumber}`, { content: editContent });
       setEditing(false);
       refetch();
     } catch (e) {
@@ -108,6 +109,42 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
       nav.toBook(bookId);
     } catch (e) {
       alert(e instanceof Error ? e.message : "Reject failed");
+    }
+  };
+
+  const handleLocalEdit = async () => {
+    setPatching(true);
+    try {
+      await postApi(`/books/${bookId}/chapters/${chapterNumber}/local-edit`, {
+        targetText,
+        replacementText,
+        instruction: "Manual chapter patch via Studio",
+      });
+      setTargetText("");
+      setReplacementText("");
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Patch failed");
+    } finally {
+      setPatching(false);
+    }
+  };
+
+  const handleFillMarkedContent = () => {
+    setMarkedContent(data.content);
+  };
+
+  const handleApplyInlineMarks = async () => {
+    setInlineApplying(true);
+    try {
+      await postApi(`/books/${bookId}/chapters/${chapterNumber}/inline-marks`, {
+        markedContent,
+      });
+      refetch();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "Inline edit failed");
+    } finally {
+      setInlineApplying(false);
     }
   };
 
@@ -231,6 +268,91 @@ export function ChapterReader({ bookId, chapterNumber, nav, theme, t }: {
             ))}
           </article>
         )}
+
+        {!editing ? (
+          <div className="mt-16 rounded-2xl border border-border/30 bg-secondary/20 p-6 md:p-8">
+            <div className="flex items-center justify-between gap-4 mb-2">
+              <div className="text-sm font-extrabold tracking-wide text-foreground/80">
+                {t("reader.localEditTitle")}
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/60">
+                {t("reader.localEditReviewTag")}
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground mb-6">
+              {t("reader.localEditHint")}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <textarea
+                value={targetText}
+                onChange={(e) => setTargetText(e.target.value)}
+                placeholder={t("reader.localEditTargetPlaceholder")}
+                className="w-full min-h-[140px] bg-background/60 text-sm leading-relaxed text-foreground/90 focus:outline-none resize-none border border-border/40 rounded-xl p-4 focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all"
+              />
+              <textarea
+                value={replacementText}
+                onChange={(e) => setReplacementText(e.target.value)}
+                placeholder={t("reader.localEditReplacementPlaceholder")}
+                className="w-full min-h-[140px] bg-background/60 text-sm leading-relaxed text-foreground/90 focus:outline-none resize-none border border-border/40 rounded-xl p-4 focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all"
+              />
+            </div>
+
+            <div className="mt-5 flex justify-end">
+              <button
+                onClick={handleLocalEdit}
+                disabled={patching || !targetText.trim()}
+                className="flex items-center gap-2 px-4 py-2 text-xs font-bold bg-primary text-primary-foreground rounded-xl hover:scale-105 active:scale-95 transition-all shadow-sm disabled:opacity-50"
+              >
+                {patching ? <div className="w-3.5 h-3.5 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" /> : <Check size={14} />}
+                {patching ? t("reader.localEditApplying") : t("reader.localEditApply")}
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {!editing ? (
+          <div className="mt-6 rounded-2xl border border-border/30 bg-secondary/10 p-6 md:p-8">
+            <div className="flex items-center justify-between gap-4 mb-2">
+              <div className="text-sm font-extrabold tracking-wide text-foreground/80">
+                {t("reader.inlineMarksTitle")}
+              </div>
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground/60">
+                {t("reader.inlineMarksUsesModel")}
+              </div>
+            </div>
+            <div className="text-xs text-muted-foreground mb-6">
+              {t("reader.inlineMarksHint")}
+            </div>
+
+            <textarea
+              value={markedContent}
+              onChange={(e) => setMarkedContent(e.target.value)}
+              placeholder={t("reader.inlineMarksPlaceholder")}
+              className="w-full min-h-[220px] bg-background/60 text-sm leading-relaxed text-foreground/90 focus:outline-none resize-none border border-border/40 rounded-xl p-4 focus:border-primary/40 focus:ring-2 focus:ring-primary/10 transition-all"
+            />
+
+            <div className="mt-5 flex flex-col md:flex-row gap-3 md:items-center md:justify-end">
+              <button
+                onClick={handleFillMarkedContent}
+                className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold bg-secondary text-muted-foreground rounded-xl hover:text-foreground hover:bg-secondary/80 transition-all border border-border/50"
+              >
+                <ChevronLeft size={14} />
+                {t("reader.inlineMarksFill")}
+              </button>
+              <button
+                onClick={handleApplyInlineMarks}
+                disabled={inlineApplying || !markedContent.trim()}
+                className="flex items-center justify-center gap-2 px-4 py-2 text-xs font-bold bg-primary text-primary-foreground rounded-xl hover:scale-105 active:scale-95 transition-all shadow-sm disabled:opacity-50"
+              >
+                {inlineApplying
+                  ? <div className="w-3.5 h-3.5 border-2 border-primary-foreground/20 border-t-primary-foreground rounded-full animate-spin" />
+                  : <Check size={14} />}
+                {inlineApplying ? t("reader.inlineMarksApplying") : t("reader.inlineMarksApply")}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <footer className="mt-24 pt-12 border-t border-border/20 flex flex-col items-center gap-6 text-center">
           <div className="flex items-center gap-4 text-xs font-medium text-muted-foreground">

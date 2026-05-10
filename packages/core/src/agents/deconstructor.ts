@@ -380,7 +380,7 @@ function synthesizeL3(annotations: ChapterAnnotation[]): Layer3Fluctuation {
   const ampMax = amplitudes.length > 0 ? Math.max(...amplitudes) : 0;
 
   // Power transfer
-  const allPower = annotations.flatMap(a => a.powerEvents);
+  const allPower = annotations.flatMap(a => a.powerEvents ?? []).filter(e => e && typeof e.type === "string");
   const winCount = allPower.filter(e => e.type === "power").length;
   const lossCount = allPower.filter(e => e.type === "info").length;
   // Note: "tie" is the moral/relationship events
@@ -567,8 +567,12 @@ export async function deconstruct(ctx: DeconstructContext): Promise<DeconstructR
           .replace(/```\s*/g, "")
           .trim();
         const parsed = JSON.parse(cleaned) as ChapterAnnotation;
+        let tt = parsed.transitionTypes;
+        if (typeof tt === "string") tt = [tt];
+        if (!Array.isArray(tt)) tt = ["blankLine"];
         annotations.push({
           ...parsed,
+          transitionTypes: tt,
           chapterNumber: chapterNum,
           chapterLength: countCJK(chapterText),
         });

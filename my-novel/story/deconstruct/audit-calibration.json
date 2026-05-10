@@ -1,0 +1,80 @@
+{
+  "sourceName": "死人经",
+  "generatedAt": "2026-05-09T15:03:50.926Z",
+  "enabled": true,
+  "sentenceLength": {
+    "p05": 7,
+    "p95": 88
+  },
+  "paragraph": {
+    "shortParagraphWarning": true,
+    "shortParagraphMinLength": 35,
+    "consecutiveShortWarning": true,
+    "maxConsecutiveShort": 3
+  },
+  "opening": {
+    "expectedTypes": [],
+    "forbiddenTypes": [
+      "environment",
+      "dialogue",
+      "action",
+      "inner"
+    ]
+  },
+  "closing": {
+    "expectedPattern": "singleLine",
+    "avgClosingLengthMin": 0,
+    "avgClosingLengthMax": 30
+  },
+  "dialogue": {
+    "densityRange": [
+      0,
+      21
+    ],
+    "maxConsecutiveTurns": 4
+  },
+  "combat": {
+    "forbidTechniqueNames": true,
+    "maxDescriptionLength": 200,
+    "requireEnvironmentalMetaphors": true
+  },
+  "pov": {
+    "forbidInnerMonologue": false,
+    "expectedMode": "objective"
+  },
+  "characterEntrance": {
+    "minLeadLength": 11,
+    "maxLeadLength": 172
+  },
+  "tone": {
+    "narrativeDistanceRange": [
+      5,
+      35
+    ],
+    "lonelinessIndexRange": [
+      0,
+      15
+    ],
+    "warmthLevelRange": [
+      0,
+      15
+    ]
+  },
+  "emotion": {
+    "volatilityRange": [
+      0,
+      5
+    ],
+    "reversalFrequencyRange": [
+      0,
+      0.5
+    ]
+  },
+  "pageTurner": {
+    "minStrength": 1
+  },
+  "reader": {
+    "sweetSpots": [],
+    "dealBreakers": []
+  }
+}

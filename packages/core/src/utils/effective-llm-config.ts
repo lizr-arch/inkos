@@ -465,7 +465,7 @@ function modelBelongsToService(service: string, model: string): boolean {
 }
 
 function serviceAllowsUnlistedModels(service: string): boolean {
-  return service === "ollama";
+  return service === "ollama" || service === "trae";
 }
 
 function serviceEntryKey(entry: ServiceConfigEntry): string {

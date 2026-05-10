@@ -8,8 +8,14 @@
 
 - 项目根目录: `D:\Code\inkos`
 - CLI 入口: `node packages/cli/dist/index.js`
-- LLM 提供商: DeepSeek (已配置在 `.env`)
+- LLM 提供商: Trae 本地桥接 (已配置在 `my-novel/.env` 与 `my-novel/inkos.json`)
 - 项目目录: `D:\Code\inkos\my-novel` (已初始化)
+
+### Trae 本地桥接约定
+
+- Base URL: `http://127.0.0.1:37185/v1`
+- 默认模型: `kimi-k2.5`
+- 启动写作前请确保本机端口 37185 已监听且支持 OpenAI-compatible `GET /v1/models` 与 `POST /v1/chat/completions`
 
 ## 核心工作流
 
@@ -31,6 +37,12 @@
 
 ```
 node packages/cli/dist/index.js write next <book-id> --count 5 --context "方向引导"
+```
+
+如果项目只有 1 本书，可省略 `<book-id>`：
+
+```
+node packages/cli/dist/index.js write next --count 1
 ```
 
 ### 第 3 步：审阅/导书
